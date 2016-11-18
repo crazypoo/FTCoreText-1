@@ -8,6 +8,8 @@
 #import "FTCoreTextView.h"
 #import <QuartzCore/QuartzCore.h>
 #import <CoreText/CoreText.h>
+#import <SDWebImage/SDImageCache.h>
+#import <SDWebImage/SDWebImageManager.h>
 
 
 #define FTCT_SYSTEM_VERSION_LESS_THAN(v)			([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] == NSOrderedAscending)
@@ -55,6 +57,9 @@ typedef NS_ENUM(NSInteger, FTCoreTextTagType) {
 @property (nonatomic) BOOL isImage;
 @property (nonatomic) BOOL isBullet;
 @property (nonatomic) NSString *imageName;
+
+@property (nonatomic, retain) UIImage           *image;
+@property (nonatomic, assign) CGRect            nodeBounds;
 
 - (NSString *)descriptionOfTree;
 - (NSString *)descriptionToRoot;
@@ -235,7 +240,9 @@ typedef NS_ENUM(NSInteger, FTCoreTextTagType) {
 @property (nonatomic) NSArray *selectionsViews;
 
 CTFontRef CTFontCreateFromUIFont(UIFont *font);
-NSTextAlignment NSTextAlignmentFromCoreTextAlignment(FTCoreTextAlignement alignment);
+//UITextAlignment UITextAlignmentFromCoreTextAlignment(FTCoreTextAlignement alignment);
+NSTextAlignment UITextAlignmentFromCoreTextAlignment(FTCoreTextAlignement alignment);
+
 NSInteger rangeSort(NSString *range1, NSString *range2, void *context);
 
 - (void)updateFramesetterIfNeeded;
@@ -437,6 +444,21 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
     return ctFont;
 }
 
+NSTextAlignment UITextAlignmentFromCoreTextAlignment(FTCoreTextAlignement alignment)
+{
+    switch (alignment) {
+        case FTCoreTextAlignementCenter:
+            return NSTextAlignmentCenter;
+            break;
+        case FTCoreTextAlignementRight:
+            return NSTextAlignmentRight;
+            break;
+        default:
+            return NSTextAlignmentLeft;
+            break;
+    }
+}
+
 #pragma mark - FTCoreTextView business
 #pragma mark -
 
@@ -511,7 +533,7 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
 				
 				for (NSString *key in urlsKeys) {
 					NSRange range = NSRangeFromString(key);
-					if (index >= range.location && index <= range.location + range.length) {
+					if (index >= range.location && index < range.location + range.length) {
 						NSURL *url = [_URLs objectForKey:key];
 						if (url) [returnedDict setObject:url forKey:FTCoreTextDataURL];
 						
@@ -781,7 +803,7 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
                 currentSupernode.isClosed = YES;
                 if (currentSupernode.isLink) {
                     //replace active string with url text
-                    
+
                     NSRange elementContentRange = NSMakeRange(currentSupernode.startLocation, tagRange.location - currentSupernode.startLocation);
                     NSString *elementContent = [processedString substringWithRange:elementContentRange];
                     NSRange pipeRange = [elementContent rangeOfString:@"|"];
@@ -793,14 +815,10 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
                     }
                     
                     [processedString replaceCharactersInRange:NSMakeRange(elementContentRange.location, elementContentRange.length + tagRange.length) withString:urlDescription];
-                    
-                    if (_autoHttpPrefixLinks) {
-                        if (!([[urlString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] hasPrefix:@"http://"] || [[urlString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] hasPrefix:@"https://"]))
-                        {
-                            urlString = [NSString stringWithFormat:@"http://%@", urlString];
-                        }
+                    if (!([[urlString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] hasPrefix:@"http://"] || [[urlString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] hasPrefix:@"https://"]))
+                    {
+                        urlString = [NSString stringWithFormat:@"http://%@", urlString];
                     }
-                    
                     NSURL *url = [NSURL URLWithString:[urlString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
                     NSRange urlDescriptionRange = NSMakeRange(elementContentRange.location, [urlDescription length]);
                     [_URLs setObject:url forKey:NSStringFromRange(urlDescriptionRange)];
@@ -809,36 +827,7 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
                 }
                 else if (currentSupernode.isImage) {
                     //replace active string with emptySpace
-					
-                    NSRange elementContentRange = NSMakeRange(currentSupernode.startLocation, tagRange.location - currentSupernode.startLocation);
-                    NSString *elementContent = [processedString substringWithRange:elementContentRange];
-                    UIImage *img =nil;
-                    if ([elementContent hasPrefix:@"base64:"])
-                    {
-                        NSData *myImgData = [NSData ftct_dataWithBase64EncodedString:[elementContent substringFromIndex:7]];
-                        img = [UIImage imageWithData:myImgData];
-                    }
-                    else
-                    {
-                        img = [UIImage imageNamed:elementContent];
-                    }
-                    
-                    if (img) {
-                        NSString *lines = @"\n";
-                        float leading = img.size.height;
-                        currentSupernode.style.leading = leading;
-                        
-                        currentSupernode.imageName = elementContent;
-                        [processedString replaceCharactersInRange:NSMakeRange(elementContentRange.location, elementContentRange.length + tagRange.length) withString:lines];
-                        
-                        [_images addObject:currentSupernode];
-                        currentSupernode.styleRange = NSMakeRange(elementContentRange.location, [lines length]);
-						
-                    }
-                    else {
-                        if (_verbose) NSLog(@"FTCoreTextView :%@ - Couldn't find image '%@' in main bundle", self, [NSValue valueWithRange:elementContentRange]);
-                        [processedString replaceCharactersInRange:tagRange withString:@""];
-                    }
+                    [self processImageClose:currentSupernode tagRange:tagRange processedString:processedString];
                 }
                 else {
                     currentSupernode.styleRange = NSMakeRange(currentSupernode.startLocation, tagRange.location - currentSupernode.startLocation);
@@ -904,6 +893,102 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
 	self.processedString = processedString;
 }
 
+- (void)processImageClose:(FTCoreTextNode *)currentSupernode tagRange:(NSRange)tagRange processedString:(NSMutableString *)processedString
+{
+
+    //replace active string with emptySpace
+    NSRange elementContentRange = NSMakeRange(currentSupernode.startLocation, tagRange.location - currentSupernode.startLocation);
+    NSString * elementContent = [processedString substringWithRange:elementContentRange];
+
+    UIImage *img = nil;
+    NSString *lines = @"";
+    if ([elementContent hasPrefix:@"http://"] ||
+        [elementContent hasPrefix:@"https://"])
+    {
+        lines = @"\n";
+        // image from http
+        // try to load from cache
+        img = [[SDImageCache sharedImageCache] imageFromMemoryCacheForKey:elementContent];
+        if (!img) {
+            // not in cache, load it from URL
+            img = [UIImage imageNamed:@"FTCoreText.bundle/images/loading"];
+            if (!img) {
+                NSLog(@"the placeholder image \"loading.png\" not found");
+            }
+            NSURL *imgURL = [NSURL URLWithString:elementContent];
+            NSLog(@"loading image %@", elementContent);
+            [[SDWebImageManager sharedManager] downloadImageWithURL:imgURL options:0 progress:^(NSInteger receivedSize, NSInteger expectedSize) {
+
+            } completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, BOOL finished, NSURL *imageURL) {
+                NSLog(@"loaded %@", elementContent);
+                currentSupernode.image = image;
+                currentSupernode.style.leading = image.size.height;
+                [self didMakeChanges];
+                if ([self superview]) [self setNeedsDisplay];
+
+            }];
+        }
+    }
+    else if ([elementContent hasPrefix:@"base64:"])
+    {
+        NSData *myImgData = [NSData ftct_dataWithBase64EncodedString:[elementContent substringFromIndex:7]];
+        img = [UIImage imageWithData:myImgData];
+    }
+    else
+    {
+        // local image, normally it's an emotion image
+        img = [UIImage imageNamed:elementContent];
+        if (img) {
+            lines = [self spaceForEmotionImage:img withStyle:currentSupernode.style];
+        }
+        else {
+            // if can't load the local image, just show the element.
+            lines = [self faceFileName:elementContent];
+        }
+    }
+    if (img) {
+        currentSupernode.style.leading = img.size.height;
+    }
+    else {
+        currentSupernode.image = nil;
+        NSLog(@"FTCoreTextView - Couldn't find image '%@' in main bundle", elementContent);
+    }
+    currentSupernode.image = img;
+    currentSupernode.imageName = elementContent;
+    [processedString replaceCharactersInRange:NSMakeRange(elementContentRange.location, elementContentRange.length + tagRange.length) withString:lines];
+    
+    [_images addObject:currentSupernode];
+    currentSupernode.styleRange = NSMakeRange(elementContentRange.location, lines.length);
+}
+
+- (NSString *)spaceForEmotionImage:(UIImage *)image withStyle:(FTCoreTextStyle *)style{
+    NSString *fillChar;
+    if (!style.color && style.color != [UIColor clearColor]) {
+        fillChar = @" ";
+    }
+    else {
+        fillChar = @"-";
+        style.color = [UIColor clearColor];
+    }
+    NSMutableString *str = [[NSMutableString alloc] init];
+    CGFloat spaceWidth = [fillChar sizeWithAttributes:[NSDictionary dictionaryWithObjectsAndKeys:[UIFont fontWithName:@"AppleSDGothicNeo-Regular" size:16], NSFontAttributeName, nil]].width;
+    int count = (int)ceil((image.size.height/spaceWidth));
+    for (int i=0; i<count; ++i) {
+        [str appendString:fillChar];
+    }
+    return str;
+}
+
+- (NSString *)faceFileName:(NSString *)elemName {
+    NSScanner *scanner = [NSScanner scannerWithString:elemName];
+    if ([scanner scanUpToString:@"/" intoString:nil]) {
+        [scanner scanString:@"/" intoString:nil];
+        NSString *fileName = nil;
+        if ([scanner scanUpToString:@"." intoString:&fileName])
+            return fileName;
+    }
+    return elemName;
+}
 /*!
  * @abstract Remove all the tags and return a clean text to be used
  *
@@ -1107,7 +1192,6 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
     _images = [[NSMutableArray alloc] init];
 	_verbose = YES;
 	_highlightTouch = YES;
-    _autoHttpPrefixLinks = NO;
 	self.opaque = YES;
 	self.backgroundColor = [UIColor whiteColor];
 	self.contentMode = UIViewContentModeRedraw;
@@ -1260,77 +1344,90 @@ CTFontRef CTFontCreateFromUIFont(UIFont *font)
 
 - (void)drawImages
 {
-	CGMutablePathRef mainPath = CGPathCreateMutable();
+    CGMutablePathRef mainPath = CGPathCreateMutable();
     if (!_path) {
         CGPathAddRect(mainPath, NULL, CGRectMake(0, 0, self.bounds.size.width, self.bounds.size.height));
     }
     else {
         CGPathAddPath(mainPath, NULL, _path);
     }
-	
+
     CTFrameRef ctframe = CTFramesetterCreateFrame(_framesetter, CFRangeMake(0, 0), mainPath, NULL);
     CGPathRelease(mainPath);
-	
-    NSArray *lines = (__bridge NSArray *)CTFrameGetLines(ctframe);
+
+    NSArray *lines = (NSArray *)CTFrameGetLines(ctframe);
     NSInteger lineCount = [lines count];
     CGPoint origins[lineCount];
-	
-	CTFrameGetLineOrigins(ctframe, CFRangeMake(0, 0), origins);
-	
-	FTCoreTextNode *imageNode = [_images objectAtIndex:0];
-	
-	for (int i = 0; i < lineCount; i++) {
-		CGPoint baselineOrigin = origins[i];
-		//the view is inverted, the y origin of the baseline is upside down
-		baselineOrigin.y = CGRectGetHeight(self.frame) - baselineOrigin.y;
-		
-		CTLineRef line = (__bridge CTLineRef)[lines objectAtIndex:i];
-		CFRange cfrange = CTLineGetStringRange(line);
-		
-        if (cfrange.location > imageNode.styleRange.location) {
-			CGFloat ascent, descent;
-			CGFloat lineWidth = CTLineGetTypographicBounds(line, &ascent, &descent, NULL);
-			
-			CGRect lineFrame = CGRectMake(baselineOrigin.x, baselineOrigin.y - ascent, lineWidth, ascent + descent);
-			
-			CTTextAlignment alignment = (CTTextAlignment)imageNode.style.textAlignment;
-            UIImage *img = nil;
-            if ([imageNode.imageName hasPrefix:@"base64:"])
+
+    CTFrameGetLineOrigins(ctframe, CFRangeMake(0, 0), origins);
+
+    NSInteger imageIndex = 0;
+    FTCoreTextNode *imageNode = [_images objectAtIndex:imageIndex];
+    for (int i = 0; i < lineCount; i++) {
+        CGPoint baselineOrigin = origins[i];
+        //the view is inverted, the y origin of the baseline is upside down
+        baselineOrigin.y = CGRectGetHeight(self.frame) - baselineOrigin.y;
+        CTLineRef line = (__bridge CTLineRef)[lines objectAtIndex:i];
+        for (id runObj in (NSArray *)CTLineGetGlyphRuns(line))
+        {
+            CTRunRef run = (__bridge CTRunRef)runObj;
+            CFRange runRange = CTRunGetStringRange(run);
+            // if the image range locate in a CFRun
+            if (runRange.location <= imageNode.styleRange.location &&
+                runRange.location+ runRange.length > imageNode.styleRange.location)
             {
-                NSData *myImgData = [NSData ftct_dataWithBase64EncodedString:[imageNode.imageName substringFromIndex:7]];
-                img = [UIImage imageWithData:myImgData];
+                CGRect runBounds;
+                CGFloat ascent, descent;
+                runBounds.size.width = CTRunGetTypographicBounds(run, CFRangeMake(0, 0), &ascent, &descent, NULL);
+                runBounds.size.height = ascent + descent;
+                CGFloat xOffset = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, NULL);
+                runBounds.origin.x = baselineOrigin.x  + xOffset;
+                runBounds.origin.y = baselineOrigin.y;
+                runBounds.origin.y -= (ascent+descent);
+                CGPathRef pathRef = CTFrameGetPath(ctframe);
+                CGRect colRect = CGPathGetBoundingBox(pathRef);
+                CGRect imgBounds = CGRectOffset(runBounds, colRect.origin.x, colRect.origin.y);
+
+                CTTextAlignment alignment = imageNode.style.textAlignment;
+
+                UIImage *img = imageNode.image;
+                NSLog(@"img:w:%f>>>>h:%f",img.size.width,img.size.height);
+
+                if (img) {
+                    if (alignment == kCTRightTextAlignment)
+                        imgBounds.origin.x = (self.frame.size.width - img.size.width);
+                    if (alignment == kCTCenterTextAlignment)
+                        imgBounds.origin.x = ((self.frame.size.width - img.size.width) / 2);
+
+                    imgBounds.size = img.size;
+                    // adjusting frame @TODO need more test
+                    UIEdgeInsets insets = imageNode.style.paragraphInset;
+                    if (alignment != kCTCenterTextAlignment) {
+                        if (alignment == kCTLeftTextAlignment) {
+                            imgBounds.origin.x = insets.left;
+                        }
+                        else {
+                            imgBounds.origin.x += insets.left;
+                        }
+                    }
+                    imgBounds.origin.y += insets.top;
+                    NSLog(@"%f",self.frame.size.width);
+//                    if ((insets.left + insets.right + img.size.width ) > self.frame.size.width) {
+//                        imgBounds.size.width = self.frame.size.width;
+//                    }
+
+                    [img drawInRect:CGRectIntegral(imgBounds)];
+                    imageNode.nodeBounds = imgBounds;
+                }
+                imageIndex ++;
+                if (imageIndex >= [_images count]) {
+                    break;
+                }
+                imageNode = [_images objectAtIndex:imageIndex];
             }
-            else
-            {
-                img = [UIImage imageNamed:imageNode.imageName];
-            }
-			if (img) {
-				int x = 0;
-				if (alignment == kCTRightTextAlignment) x = (self.frame.size.width - img.size.width);
-				if (alignment == kCTCenterTextAlignment) x = ((self.frame.size.width - img.size.width) / 2);
-				
-				CGRect frame = CGRectMake(x, (lineFrame.origin.y - img.size.height), img.size.width, img.size.height);
-                
-                // adjusting frame
-				
-                UIEdgeInsets insets = imageNode.style.paragraphInset;
-                if (alignment != kCTCenterTextAlignment) frame.origin.x = (alignment == kCTLeftTextAlignment)? insets.left : (self.frame.size.width - img.size.width - insets.right);
-                frame.origin.y += insets.top;
-                frame.size.width = ((insets.left + insets.right + img.size.width ) > self.frame.size.width)? self.frame.size.width : img.size.width;
-                
-				[img drawInRect:CGRectIntegral(frame)];
-			}
-			
-			NSInteger imageNodeIndex = [_images indexOfObject:imageNode];
-			if (imageNodeIndex < [_images count] - 1) {
-				imageNode = [_images objectAtIndex:imageNodeIndex + 1];
-			}
-			else {
-				break;
-			}
-		}
-	}
-	CFRelease(ctframe);
+        }
+    }
+    CFRelease(ctframe);
 }
 
 #pragma mark User Interaction

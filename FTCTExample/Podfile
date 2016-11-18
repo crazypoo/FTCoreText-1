@@ -1,0 +1,6 @@
+platform :ios, ‘7.1’
+use_frameworks!
+
+target 'FTCTExample' do
+	pod 'SDWebImage', '~> 3.7.1'
+end

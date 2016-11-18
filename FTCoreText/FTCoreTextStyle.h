@@ -33,15 +33,15 @@
 
 typedef void (^FTCoreTextCallbackBlock)(NSDictionary *info);
 
-
-typedef NS_ENUM(NSInteger, FTCoreTextAlignement)  {
+enum
+{
     FTCoreTextAlignementLeft = 0,
-	FTCoreTextAlignementRight = 1,
-	FTCoreTextAlignementCenter = 2,
-	FTCoreTextAlignementJustified = 3,
-	FTCoreTextAlignementNatural = 4
+    FTCoreTextAlignementRight = 1,
+    FTCoreTextAlignementCenter = 2,
+    FTCoreTextAlignementJustified = 3,
+    FTCoreTextAlignementNatural = 4
 };
-
+typedef uint8_t FTCoreTextAlignement;
 
 @interface FTCoreTextStyle : NSObject <NSCopying>
 

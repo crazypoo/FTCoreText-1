@@ -1,5 +1,6 @@
 <h1>Giraffe</h1>
 <img>giraffe.png</img>
+<img>https://avatars1.githubusercontent.com/u/1111976?v=3&s=460</img>
 
 <p>The giraffe (Giraffa camelopardalis) is an African <a>http://en.wikipedia.org/wiki/Even-toed_ungulate|even-toed ungulate</a> mammal, the tallest of all extant land-living animal species, and the largest ruminant. Its scientific name, <a>http://en.wikipedia.org/wiki/Giraffe|©2011 - Wikipedia</a> which is similar to its archaic English name of camelopard, refers to its irregular patches of color on a light background</p>
 
